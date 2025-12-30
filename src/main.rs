@@ -47,26 +47,38 @@ async fn main() -> Result<()> {
         SpeedTestMode::Ipv6 => todo!(),
     };
 
-    let progress_bar = Arc::new(ProgressBar::new(addrs.len() as u64 * cli.attempts as u64));
-    progress_bar.set_style(
-        ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}")
-            .unwrap()
-            .progress_chars("#>-"),
-    );
-    progress_bar.set_message(format!(
-        "({} addresses * {} attempts)",
-        addrs.len(),
-        cli.attempts
-    ));
+    let progress_bar: Option<Arc<ProgressBar>> = if !log::log_enabled!(log::Level::Debug) {
+        let pb = Arc::new(ProgressBar::new(addrs.len() as u64 * cli.attempts as u64));
+
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}",
+                )
+                .unwrap()
+                .progress_chars("#>-"),
+        );
+
+        pb.set_message(format!(
+            "({} addresses * {} attempts)",
+            addrs.len(),
+            cli.attempts
+        ));
+
+        Some(pb)
+    } else {
+        None
+    };
 
     let stream = tokio_stream::iter(addrs.into_iter())
         .map(|ip_port| {
-            let pb = Arc::clone(&progress_bar);
+            let pb: Option<Arc<ProgressBar>> = progress_bar.as_ref().map(Arc::clone);
             async move {
                 let mut latencies = Vec::with_capacity(cli.attempts as usize);
                 for _ in 0..cli.attempts {
-                    pb.inc(1);
+                    if let Some(pb) = pb.as_ref() {
+                        pb.inc(1);
+                    }
                     if let Ok(result) = speedtest(&ip_port).await {
                         latencies.push(result.latency);
                     }
@@ -89,7 +101,9 @@ async fn main() -> Result<()> {
     let mut alive_addrs: Vec<TestResult> = stream.collect().await;
     alive_addrs.sort_by_key(|res| res.latency);
 
-    progress_bar.finish_with_message("Done!");
+    if let Some(pb) = progress_bar {
+        pb.finish_with_message("Done!");
+    }
 
     info!(
         "Found {} working IPs out of {} IPs",
