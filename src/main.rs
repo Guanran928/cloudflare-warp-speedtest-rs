@@ -7,15 +7,38 @@ use clap_complete::generate;
 use futures::StreamExt;
 use hex::decode;
 use indicatif::{ProgressBar, ProgressStyle};
-use ipnetwork::Ipv4Network;
+use ipnetwork::IpNetwork;
 use log::{debug, info};
 use rand::seq::{IndexedRandom, IteratorRandom};
 use std::io;
-use std::net::{SocketAddr, SocketAddrV4};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::net::UdpSocket;
 use tokio::time::{Duration, timeout};
+
+const IPV4_RANGES: &[&str] = &[
+    "162.159.192.0/24",
+    "162.159.193.0/24",
+    "162.159.195.0/24",
+    "162.159.204.0/24",
+    "188.114.96.0/24",
+    "188.114.97.0/24",
+    "188.114.98.0/24",
+    "188.114.99.0/24",
+];
+
+#[rustfmt::skip]
+#[expect(dead_code)]
+const IPV6_RANGES: &[&str] = &[
+    "2606:4700:100::/48" // FIXME: this is 1.2089 * 10^24 addresses
+];
+
+const PORTS: &[u16] = &[
+    500, 854, 859, 864, 878, 880, 890, 891, 894, 903, 908, 928, 934, 939, 942, 943, 945, 946, 955,
+    968, 987, 988, 1002, 1010, 1014, 1018, 1070, 1074, 1180, 1387, 1701, 2408, 4500, 5050, 5242,
+    6515, 7103, 7152, 7156, 7281, 7559, 8319, 8742, 8854, 8886,
+];
 
 #[derive(Debug)]
 struct TestResult {
@@ -43,8 +66,9 @@ async fn main() -> Result<()> {
     };
 
     let addrs = match cli.mode {
-        SpeedTestMode::Ipv4 => generate_ipv4(cli.addresses),
+        SpeedTestMode::Ipv4 => generate_ip(cli.addresses, IPV4_RANGES),
         SpeedTestMode::Ipv6 => todo!(),
+        // SpeedTestMode::Ipv6 => generate_ip(cli.addresses, IPV6_RANGES),
     };
 
     let progress_bar: Option<Arc<ProgressBar>> = if !log::log_enabled!(log::Level::Debug) {
@@ -119,31 +143,14 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Generate `amount` of random IPv4 addresses with a random port.
-fn generate_ipv4(amount: usize) -> Vec<SocketAddr> {
-    let v4_ranges = [
-        "162.159.192.0/24",
-        "162.159.193.0/24",
-        "162.159.195.0/24",
-        "162.159.204.0/24",
-        "188.114.96.0/24",
-        "188.114.97.0/24",
-        "188.114.98.0/24",
-        "188.114.99.0/24",
-    ];
-
-    let ports = [
-        500, 854, 859, 864, 878, 880, 890, 891, 894, 903, 908, 928, 934, 939, 942, 943, 945, 946,
-        955, 968, 987, 988, 1002, 1010, 1014, 1018, 1070, 1074, 1180, 1387, 1701, 2408, 4500, 5050,
-        5242, 6515, 7103, 7152, 7156, 7281, 7559, 8319, 8742, 8854, 8886,
-    ];
-
+/// Generate `amount` of random IP addresses with a random port.
+fn generate_ip(amount: usize, ip_ranges: &[&str]) -> Vec<SocketAddr> {
     let mut rng = rand::rng();
 
-    let all_ips: Vec<_> = v4_ranges
+    let all_ips: Vec<IpAddr> = ip_ranges
         .iter()
         .flat_map(|cidr| {
-            let network: Ipv4Network = cidr.parse().expect("Invalid CIDR");
+            let network: IpNetwork = cidr.parse().expect("Invalid CIDR");
             network.iter()
         })
         .collect();
@@ -151,10 +158,10 @@ fn generate_ipv4(amount: usize) -> Vec<SocketAddr> {
     all_ips
         .iter()
         .choose_multiple(&mut rng, amount)
-        .iter()
-        .map(|&addr| {
-            let port = ports.choose(&mut rng).unwrap();
-            SocketAddr::V4(SocketAddrV4::new(*addr, *port))
+        .into_iter()
+        .map(|addr| {
+            let port = *PORTS.choose(&mut rng).unwrap() as u16;
+            SocketAddr::new(*addr, port)
         })
         .collect()
 }
