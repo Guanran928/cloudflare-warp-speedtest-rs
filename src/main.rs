@@ -28,6 +28,8 @@ async fn main() -> Result<()> {
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .format_target(false)
+        .format_timestamp(None)
+        .parse_default_env()
         .init();
 
     let cli = Args::parse();
